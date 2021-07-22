@@ -26,12 +26,18 @@ declare(strict_types=1);
  */
 namespace OCA\Provisioning_API\Controller;
 
+use OC\AppFramework\Middleware\Security\Exceptions\NotAdminException;
 use OCP\AppFramework\Http;
 use OCP\AppFramework\Http\DataResponse;
 use OCP\AppFramework\OCSController;
 use OCP\IAppConfig;
 use OCP\IConfig;
+use OCP\IGroupManager;
+use OCP\IL10N;
 use OCP\IRequest;
+use OCP\IUserSession;
+use OCP\Settings\IDelegatedSettings;
+use OCP\Settings\IManager;
 
 class AppConfigController extends OCSController {
 
@@ -40,6 +46,14 @@ class AppConfigController extends OCSController {
 
 	/** @var IAppConfig */
 	protected $appConfig;
+	/** @var IGroupManager */
+	private $groupManager;
+	/** @var IManager */
+	private $settingManager;
+	/** @var IL10N */
+	private $l10n;
+	/** @var IUserSession */
+	private $userSession;
 
 	/**
 	 * @param string $appName
@@ -50,10 +64,18 @@ class AppConfigController extends OCSController {
 	public function __construct(string $appName,
 								IRequest $request,
 								IConfig $config,
-								IAppConfig $appConfig) {
+								IAppConfig $appConfig,
+								IGroupManager $groupManager,
+								IManager $settingManager,
+                                IL10N $l10n,
+								IUserSession $userSession) {
 		parent::__construct($appName, $request);
 		$this->config = $config;
 		$this->appConfig = $appConfig;
+		$this->groupManager = $groupManager;
+		$this->settingManager = $settingManager;
+		$this->l10n = $l10n;
+		$this->userSession = $userSession;
 	}
 
 	/**
@@ -99,12 +121,45 @@ class AppConfigController extends OCSController {
 
 	/**
 	 * @PasswordConfirmationRequired
+	 * @NoSubAdminRequired
+	 * @NoAdminRequired
 	 * @param string $app
 	 * @param string $key
 	 * @param string $value
 	 * @return DataResponse
 	 */
 	public function setValue(string $app, string $key, string $value): DataResponse {
+		if (!$this->userSession->isLoggedIn()) {
+			throw new \Exception("User is not logged in."); // Should not happen, since method is guarded by middleware
+		}
+		$user = $this->userSession->getUser();
+		// Admin right verification
+		$isAdmin = $this->groupManager->isAdmin($user->getUID());
+		$allowed = true;
+		if (!$isAdmin) {
+			$settings = $this->settingManager->getAllAllowedAdminSettings($user);
+			$allowed = false;
+			foreach ($settings as $setting) {
+				if (!($setting instanceof IDelegatedSettings)) {
+					continue;
+				}
+				$allowedKeys = $setting->getAuthorizedAppConfig();
+				if (!array_key_exists($app, $allowedKeys)) {
+					continue;
+				}
+				foreach ($allowedKeys[$app] as $regex) {
+					if (preg_match($regex, $key) === 1) {
+						$allowed = true;
+						break 2;
+					}
+				}
+			}
+		}
+
+		if (!$allowed) {
+			throw new NotAdminException($this->l10n->t('Logged in user must be an admin or have authorization to edit this setting.'));
+		}
+
 		try {
 			$this->verifyAppId($app);
 			$this->verifyConfigKey($app, $key, $value);

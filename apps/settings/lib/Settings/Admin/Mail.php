@@ -29,17 +29,22 @@ namespace OCA\Settings\Settings\Admin;
 
 use OCP\AppFramework\Http\TemplateResponse;
 use OCP\IConfig;
-use OCP\Settings\ISettings;
+use OCP\IL10N;
+use OCP\Settings\IDelegatedSettings;
 
-class Mail implements ISettings {
+class Mail implements IDelegatedSettings {
 	/** @var IConfig */
 	private $config;
+
+	/** @var IL10N $l */
+	private $l;
 
 	/**
 	 * @param IConfig $config
 	 */
-	public function __construct(IConfig $config) {
+	public function __construct(IConfig $config, IL10N $l) {
 		$this->config = $config;
+		$this->l = $l;
 	}
 
 	/**
@@ -89,5 +94,13 @@ class Mail implements ISettings {
 	 */
 	public function getPriority() {
 		return 10;
+	}
+
+	public function getName(): ?string {
+		return $this->l->t('Email server');
+	}
+
+	public function getAuthorizedAppConfig(): array {
+		return [];
 	}
 }

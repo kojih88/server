@@ -36,11 +36,11 @@ use OCP\AppFramework\Http\TemplateResponse;
 use OCP\Constants;
 use OCP\IConfig;
 use OCP\IL10N;
-use OCP\Settings\ISettings;
+use OCP\Settings\IDelegatedSettings;
 use OCP\Share\IManager;
 use OCP\Util;
 
-class Sharing implements ISettings {
+class Sharing implements IDelegatedSettings {
 	/** @var IConfig */
 	private $config;
 
@@ -150,5 +150,15 @@ class Sharing implements ISettings {
 	 */
 	public function getPriority() {
 		return 0;
+	}
+
+	public function getAuthorizedAppConfig(): array {
+		return [
+			'core' => ['/shareapi_.*/'],
+		];
+	}
+
+	public function getName(): ?string {
+		return null;
 	}
 }
