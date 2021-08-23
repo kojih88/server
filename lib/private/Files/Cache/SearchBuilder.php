@@ -85,7 +85,7 @@ class SearchBuilder {
 
 	/**
 	 * @param IQueryBuilder $builder
-	 * @param ISearchOperator $operator
+	 * @param ISearchOperator[] $operators
 	 */
 	public function searchOperatorArrayToDBExprArray(IQueryBuilder $builder, array $operators) {
 		return array_filter(array_map(function ($operator) use ($builder) {
@@ -95,6 +95,20 @@ class SearchBuilder {
 
 	public function searchOperatorToDBExpr(IQueryBuilder $builder, ISearchOperator $operator) {
 		$expr = $builder->expr();
+
+		// path prefix filters are handled special case to generate a query better suited for indexes
+		if ($pathPrefix = $this->operatorIsPathPrefix($builder, $operator)) {
+			// normally the `path = "$prefix"` search query part of the prefix filter would be generated as an `path_hash = md5($prefix)` sql query
+			// since the `path_hash` sql column usually provides much faster querying that selecting on the `path` sql column
+			//
+			// however, since we're already doing a filter on the `path` column in the form of `path LIKE "$prefix/%"`
+			// generating a `path = "$prefix"` sql query lets the database handle use the same column for both expressions and potentially use the same index
+			return $expr->orX(
+				$expr->like('path', $builder->createNamedParameter($builder->getConnection()->escapeLikeParameter($pathPrefix) . '/%')),
+				$expr->eq('path', $builder->createNamedParameter($pathPrefix)),
+			);
+		}
+
 		if ($operator instanceof ISearchBinaryOperator) {
 			if (count($operator->getArguments()) === 0) {
 				return null;
@@ -121,6 +135,32 @@ class SearchBuilder {
 		} else {
 			throw new \InvalidArgumentException('Invalid operator type: ' . get_class($operator));
 		}
+	}
+
+	/**
+	 * Check if the operator is a path prefix filter in the form of `path LIKE "$prefix/" OR path = "$prefix"` and return $prefix if that is the case
+	 *
+	 * @param IQueryBuilder $builder
+	 * @param ISearchOperator $operator
+	 * @return string|null
+	 */
+	private function operatorIsPathPrefix(IQueryBuilder $builder, ISearchOperator $operator): ?string {
+		if ($operator instanceof ISearchBinaryOperator && $operator->getType() === ISearchBinaryOperator::OPERATOR_OR && count($operator->getArguments()) == 2) {
+			$a = $operator->getArguments()[0];
+			$b = $operator->getArguments()[1];
+			if ($a instanceof ISearchComparison && $b instanceof ISearchComparison && $a->getField() === 'path' && $b->getField() === 'path') {
+				if ($a->getType() === ISearchComparison::COMPARE_LIKE && $b->getType() === ISearchComparison::COMPARE_EQUAL
+					&& $a->getValue() === $builder->getConnection()->escapeLikeParameter($b->getValue()) . '/%') {
+					return $b->getValue();
+				}
+				if ($b->getType() === ISearchComparison::COMPARE_LIKE && $a->getType() === ISearchComparison::COMPARE_EQUAL
+					&& $b->getValue() === $builder->getConnection()->escapeLikeParameter($a->getValue()) . '/%') {
+					return $a->getValue();
+				}
+			}
+		}
+
+		return null;
 	}
 
 	private function searchComparisonToDBExpr(IQueryBuilder $builder, ISearchComparison $comparison, array $operatorMap) {
